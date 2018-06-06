@@ -1,0 +1,654 @@
+---
+title: "GAMMs LabPhon 18"
+author: 
+  name: "Jalal Al-Tamimi"
+  affiliation: "Newcastle University"
+date: "6 June 2018"
+output: 
+  html_notebook:
+    number_sections: true
+    toc: true
+    toc_depth: 4
+    toc_float:
+      collapsed: true
+---
+
+# Loading packages 
+```{r warning=FALSE, message=FALSE, error=FALSE}
+
+library(ggplot2);library(mgcv);library(itsadug);library(tidyverse);library(gganimate)
+```
+
+# Demo Linear Model vs GAM
+In this demo, data obtained from a Jordanian Arabic speaker producing the word /du:d/ "worm" is used. F2 frequencies obtained at 5 ms interval from onset to midpoint of the vowel are used.
+Let's plot the F2 frequencies by interval number. The second plot displays a linear regression line superimposed on the plot. As can be seen, the linear regression line is not able to cope with the curviness of the data, and is unable to cope with it. The third plot superimposes a spline obtained from a GAM model.
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+ggplot.demo1 <- ggplot(demoGAMProd,aes(x=IntervalsN,y=F2))+
+                geom_point()+theme_bw(base_size = 20)+coord_cartesian(ylim=c(600,1800))+
+                labs(y = "F2 Hz", x = "Intervals number")
+ggplot.demo1
+
+ggplot.demo2 <- ggplot(demoGAMProd,aes(x=IntervalsN,y=F2))+
+  geom_point()+theme_bw(base_size = 20)+coord_cartesian(ylim=c(600,1800))+
+  labs(y = "F2 Hz", x = "Intervals number")+geom_smooth(method = lm, se=F)
+
+ggplot.demo2
+
+ggplot.demo3 <- ggplot(demoGAMProd,aes(x=IntervalsN,y=predict(bam(F2 ~ s(IntervalsN, bs="cr"), data = demoGAMProd))))+
+  geom_point()+theme_bw(base_size = 20)+coord_cartesian(ylim=c(600,1800))+
+  labs(y = "F2 Hz", x = "Intervals number")+geom_smooth(method = lm, formula = y ~ splines::bs(x, 3),se=F)
+
+ggplot.demo3
+
+```
+
+# Actual data analyses
+This data is obtained from a single speaker producing various consonants in the frame VCV, with V = symmetric /i: a: u:/ (=vowel) and C is one of 17 consonants put into five contexts "plain", "velar", "uvular", "pharyngealised" and "pharyngeal" (=context). The data is from Ultrasound Tongue Imaging. Tongue contours were obtained at the consonant onset, midpoint and offset (=time). A total of 51 words (=word) were obtained and these were repeated 3 times. Tingue splies were extracted with X-Y coordinates (=y outcome). 42 Fan positions (=Fan) were extracted and these are used as a normalisation between contexts.
+The outcome is y, the predictors are Fan, time, context and vowel, and the random factor is word.
+
+## Creating new variables
+Before running the actual GAM model on the data, we need to:
+
+1. Create two new variables for context and vowel. These will be "ordered" predictors and sum coded
+2. To run an Auto-Regressive Model, we need to find the autocorrelation in the dataframe:
+  + We rearrange the data by time, ID, and Fan 
+  + We add a new variable "start" that marks the start of Fan
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+
+pharDF$context.ord <- as.ordered(pharDF$context)
+contrasts(pharDF$context.ord) <- "contr.treatment"
+
+pharDF$vowel.ord <- as.ordered(pharDF$vowel)
+contrasts(pharDF$vowel.ord) <- "contr.treatment"
+
+## to find autocorrelation in the data. Rearrange dataframe and add a variable "start" to indicate 
+## when Fan == 1
+pharDF <- arrange(pharDF, time, ID, Fan)
+pharDF$start <- pharDF$Fan==1
+
+```
+## Visualising the data
+
+Before running anything, we start by visualising the data and use an animated figure
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+pl <- ggplot(pharDF, aes(x=Fan, y=y, col=context, frame=time)) +
+  facet_grid(vowel ~ context) +
+  geom_line(aes(group=ID))+theme_bw()
+gganimate(pl, ani.width=800, height=300)
+
+```
+
+
+## Running our first GAM model
+This is our first GAM model. This will be used to find the level of autocorrelation in the data. Our model has double non-linear predictors (fan and time), two factor predictors (context and vowel) and one random effect (word). Interactions between fan and time are used. In addition, by context*vowel interaction is added to account for the two-way interaction with respect to each of fan and time.
+The function itsadug::acf_resid is used, and we display the level of autocorrelation for each of the "Fan", the "time", the "context", the "vowel" finally the "word"
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+
+phar.gam.noAR <- bam(y ~ context.ord*vowel.ord +
+                        ## 1d smooths
+                        s(Fan, bs="cr", k=10) +
+                        s(time, bs="cr", k=3) +
+                        ## 1d smooths * factors
+                        s(Fan, k=10, bs="cr", by=context.ord) +
+                        s(Fan, k=10, bs="cr", by=vowel.ord) +
+                        s(Fan, k=10, bs="cr", by=context.ord:vowel.ord) +
+                        s(time, k=3, bs="cr", by=context.ord) +
+                        s(time, k=3, bs="cr", by=vowel.ord) +
+                        s(time, k=3, bs="cr", by=context.ord:vowel.ord) +
+                        ## 2d smooths
+                        ti(Fan, time, bs="cr", k=c(10,3))+
+                        ## 2d smooths * factors
+                        ti(Fan, time, bs="cr", k=c(10,3),by=context.ord)+
+                        ti(Fan, time, bs="cr", k=c(10,3),by=vowel.ord)+
+                        ti(Fan, time, bs="cr", k=c(10,3),by=context.ord:vowel.ord)+
+                        ## random smooths by word
+                        s(Fan, word, bs="fs", k=10, m=1) +
+                        s(time, word, bs="fs", k=3, m=1),
+                        data=pharDF)
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+summary(phar.gam.noAR)
+
+rho_est <- start_value_rho(phar.gam.noAR)
+rho_est
+```
+
+### ACF first GAM
+The five plots below show the autocorrelation in the residuals. As can be see, the first plot using Fan, has a complete zero correlations. It is possible that because the various fan points obtained alongside the tongue contour are already correlated with each other, and hence the correlations between fan 1 to 2, 2 to 3, 41 to 42 are already taken into account by the model. 
+The four additional plots show the autocorrelation in teh residuals for time, context, vowel and word. All of these predictors are showing autocorrelations between their successive points. It is crucial to tell the model to account for this, otherwise there is overconfidence in the estimates. 
+
+#### ACF by Fan
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.noAR,split_pred=list(pharDF$Fan),main = "Average ACF No.AR by Fan",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Time
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.noAR,split_pred=list(pharDF$time),main = "Average ACF No.AR by Time",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Context
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.noAR,split_pred=list(pharDF$context.ord),main = "Average ACF No.AR by Context",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Vowel
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.noAR,split_pred=list(pharDF$vowel.ord),main = "Average ACF No.AR by Vowel",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Word
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.noAR,split_pred=list(pharDF$word),main = "Average ACF No.AR by Word",cex.lab=1.5,cex.axis=1.5)
+```
+
+
+## Running our second Autoregressive GAM
+
+Our second GAM model is identical to the first, but takes into account the autocorrelation. By including AR.start and rho, we are using information obtained from original model to account for the autocorrelation
+```{r warning=FALSE, message=FALSE, error=FALSE}
+phar.gam.AR <- bam(y ~ context.ord*vowel.ord +
+                       ## 1d smooths
+                       s(Fan, bs="cr", k=10) +
+                       s(time, bs="cr", k=3) +
+                       ## 1d smooths * factors
+                       s(Fan, k=10, bs="cr", by=context.ord) +
+                       s(Fan, k=10, bs="cr", by=vowel.ord) +
+                       s(Fan, k=10, bs="cr", by=context.ord:vowel.ord) +
+                       s(time, k=3, bs="cr", by=context.ord) +
+                       s(time, k=3, bs="cr", by=vowel.ord) +
+                       s(time, k=3, bs="cr", by=context.ord:vowel.ord) +
+                       ## 2d smooths
+                       ti(Fan, time, bs="cr", k=c(10,3))+
+                       ## 2d smooths * factors
+                       ti(Fan, time, bs="cr", k=c(10,3),by=context.ord)+
+                       ti(Fan, time, bs="cr", k=c(10,3),by=vowel.ord)+
+                       ti(Fan, time, bs="cr", k=c(10,3),by=context.ord:vowel.ord)+
+                       ## random smooths by word
+                       s(Fan, word, bs="fs", k=10, m=1) +
+                       s(time, word, bs="fs", k=3, m=1),
+                       data=pharDF,
+                       AR.start=pharDF$start, rho=rho_est)
+```
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+summary(phar.gam.AR)
+```
+
+### ACF second GAM
+The following five plots show (in the same order as above) the autocorrelation in the residuals. As can be seen, for all five plots, the levels of autocorrelations in the residuals are reduced massively. We have now more confidence in our estimates, and can continue work
+
+#### ACF by Fan
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.AR,split_pred=list(pharDF$Fan),main = "Average ACF AR by Fan",cex.lab=1.5,cex.axis=1.5)
+```
+
+
+#### ACF by Time
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.AR,split_pred=list(pharDF$time),main = "Average ACF AR by Time",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Context
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.AR,split_pred=list(pharDF$context.ord),main = "Average ACF AR by Context",cex.lab=1.5,cex.axis=1.5)
+```
+
+
+#### ACF by Vowel
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.AR,split_pred=list(pharDF$vowel.ord),main = "Average ACF AR by Vowel",cex.lab=1.5,cex.axis=1.5)
+```
+
+#### ACF by Word
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+acf_resid(phar.gam.AR,split_pred=list(pharDF$word),main = "Average ACF AR by Word",cex.lab=1.5,cex.axis=1.5)
+```
+
+
+## Significance testing second Autoregressive GAM
+To test for significance of context, we run a model with a ML as method and evaluate significance through a maximum likelihood estimate.
+
+### Models
+We ran three models
+
+1. A full model with all predictors (phar.gam.AR.ML)
+2. A reduced model without any terms associated with the predictor "context" (phar.gam.AR.ML.Min.Context)
+3. An intercept only model (=Null) without any terms associated with the predictory "vowel" (phar.gam.AR.ML.Min.ContextAndVowel)
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+phar.gam.AR.ML <- bam(y ~ context.ord*vowel.ord +
+                           # 1d smooths
+                           s(Fan, bs="cr",k=10) +
+                           s(time, bs="cr", k=3) +
+                           # 1d smooth * factor
+                           s(Fan, k=10, bs="cr", by=context.ord) +
+                           s(Fan, k=10, bs="cr", by=vowel.ord) +
+                           s(Fan, k=10, bs="cr", by=context.ord:vowel.ord) +
+                           s(time, k=3, bs="cr", by=context.ord) +
+                           s(time, k=3, bs="cr", by=vowel.ord) +
+                           s(time, k=3, bs="cr", by=context.ord:vowel.ord) +
+                           # 2d smooth
+                           ti(Fan, time, bs="cr", k=c(10,3))+
+                           ti(Fan, time, bs="cr", k=c(10,3),by=context.ord)+
+                           ti(Fan, time, bs="cr", k=c(10,3),by=vowel.ord)+
+                           ti(Fan, time, bs="cr", k=c(10,3),by=context.ord:vowel.ord)+                      
+                           # random smooths by word
+                           s(Fan, word, bs="fs", k=10, m=1) +
+                           s(time, word, bs="fs", k=3, m=1),
+                           data=pharDF,
+                           method="ML", 
+                           AR.start=pharDF$start, rho=rho_est)
+
+phar.gam.AR.ML.Min.Context <- bam(y ~ vowel.ord +
+                                      # 1d smooths
+                                      s(Fan, bs="cr",k=10) +
+                                      s(time, bs="cr", k=3) +
+                                      # 1d smooth * factor
+                                      ##s(Fan, k=10, bs="cr", by=context.ord) +
+                                      s(Fan, k=10, bs="cr", by=vowel.ord) +
+                                      ##s(Fan, k=10, bs="cr", by=context.ord:vowel.ord) +
+                                      ##s(time, k=3, bs="cr", by=context.ord) +
+                                      s(time, k=3, bs="cr", by=vowel.ord) +
+                                      ##s(time, k=3, bs="cr", by=context.ord:vowel.ord) +
+                                      # 2d smooth
+                                      ti(Fan, time, bs="cr", k=c(10,3))+
+                                      ##ti(Fan, time, bs="cr", k=c(10,3),by=context.ord)+
+                                      ###ti(Fan, time, bs="cr", k=c(10,3),by=vowel.ord)+
+                                      ##ti(Fan, time, bs="cr", k=c(10,3),by=context.ord:vowel.ord)+                      
+                                      # random smooths by word
+                                      s(Fan, word, bs="fs", k=10, m=1) +
+                                      s(time, word, bs="fs", k=3, m=1),
+                                      data=pharDF,
+                                      method="ML", 
+                                      AR.start=pharDF$start, rho=rho_est)
+
+
+phar.gam.AR.ML.Min.ContextAndVowel <- bam(y ~ 1 +
+                                    # 1d smooths
+                                    s(Fan, bs="cr",k=10) +
+                                    s(time, bs="cr", k=3) +
+                                    # 1d smooth * factor
+                                    ##s(Fan, k=10, bs="cr", by=context.ord) +
+                                    ###s(Fan, k=10, bs="cr", by=vowel.ord) +
+                                    ##s(Fan, k=10, bs="cr", by=context.ord:vowel.ord) +
+                                    ##s(time, k=3, bs="cr", by=context.ord) +
+                                    ###s(time, k=3, bs="cr", by=vowel.ord) +
+                                    ##s(time, k=3, bs="cr", by=context.ord:vowel.ord) +
+                                    # 2d smooth
+                                    ##ti(Fan, time, bs="cr", k=c(10,3),by=context.ord)+
+                                    ###ti(Fan, time, bs="cr", k=c(10,3),by=vowel.ord)+
+                                    ##ti(Fan, time, bs="cr", k=c(10,3),by=context.ord:vowel.ord)+                      
+                                    # random smooths by word
+                                    s(Fan, word, bs="fs", k=10, m=1) +
+                                    s(time, word, bs="fs", k=3, m=1),
+                                    data=pharDF,
+                                    method="ML", 
+                                    AR.start=pharDF$start, rho=rho_est)
+```
+
+### Model comparison
+Then we compare results of these models as below shown below.    
+
+#### Effect of Context vs null
+```{r warning=FALSE, message=FALSE, error=FALSE}
+compareML(phar.gam.AR.ML, phar.gam.AR.ML.Min.Context)
+```
+
+#### Effect of Vowel vs Null
+```{r warning=FALSE, message=FALSE, error=FALSE}
+compareML(phar.gam.AR.ML,phar.gam.AR.ML.Min.ContextAndVowel)
+```
+
+#### Effect of Context vs Vowel
+```{r warning=FALSE, message=FALSE, error=FALSE}
+compareML(phar.gam.AR.ML.Min.Context,phar.gam.AR.ML.Min.ContextAndVowel)
+```
+
+From the results above, both "context" and "vowel" are improving the model fit. "Context" is improving the model fit more than "vowel" (see 3rd comparison)
+
+## Visualising smooths from second Autoregressive GAM
+We use the function itsadug::plot_smooth to plot the five smooths for context "plain", "velar", "uvular", "pharyngealised" and "pharyngeal", in each of the vowel contexts /i: a: u:/ at the onset, midpoint and offset.
+
+The results show that at the midpoint and offset, the three contexts, uvular, pharyngealised and pharyngeal are different from each other: uvular has a higher tongue position (y coordinate); intermediate in pharyngealised and lower and fronted in pharyngeal. At the onset, the same pattern is see though to a lower degree in /a:/.
+
+### Vowel /i:/
+
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="ii",time=1),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /i:/ at Onset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="ii",time=1),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="ii",time=1),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="ii",time=1),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="ii",time=1),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="ii",time=2),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /i:/ at Mid",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="ii",time=2),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="ii",time=2),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="ii",time=2),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="ii",time=2),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Offset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="ii",time=3),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /i:/ at Offset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="ii",time=3),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="ii",time=3),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="ii",time=3),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="ii",time=3),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+### Vowel /a:/
+
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="aa",time=1),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /a:/ at Onset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="aa",time=1),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="aa",time=1),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="aa",time=1),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="aa",time=1),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="aa",time=2),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /a:/ at Mid",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="aa",time=2),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="aa",time=2),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="aa",time=2),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="aa",time=2),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Offset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="aa",time=3),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /a:/ at Offset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="aa",time=3),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="aa",time=3),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="aa",time=3),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="aa",time=3),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+### Vowel /u:/
+
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="uu",time=1),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /u:/ at Onset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="uu",time=1),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="uu",time=1),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="uu",time=1),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="uu",time=1),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="uu",time=2),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /u:/ at Mid",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="uu",time=2),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="uu",time=2),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="uu",time=2),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="uu",time=2),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+```
+
+#### Offset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="plain",vowel.ord="uu",time=3),col="darkmagenta",ylim = c(10,65),ylab="",xlab="",
+            main="GAM smooths in /u:/ at Offset",hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="velar",vowel.ord="uu",time=3),col="gray70",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="uvular",vowel.ord="uu",time=3),col="green",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngealised",vowel.ord="uu",time=3),col="red",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+plot_smooth(phar.gam.AR, view = "Fan",cond = list(context.ord="pharyngeal",vowel.ord="uu",time=3),col="blue",add=TRUE,ylim = c(10,65),hide.label=T,cex.axis=1.3,rm.ranef=T)
+legend("topleft", legend=c("Plain", "Velar", "Uvular","Pharyngealised","Pharyngeal"), 
+       col=c("darkmagenta","gray70","green","red","blue"), lwd=4)
+
+
+```
+
+## Visualising Difference smooths from second Autoregressive GAM
+We use the function itsadug::plot_diff to plot the differences between the following pairs: "pharyngealised" vs "plain"; "uvular" vs "pharyngealised" and "pharyngealised" vs "pharyngeal", in each of the vowel contexts /i: a: u:/ at the onset, midpoint and offset.
+
+The results show that: 
+
+1. Pharyngealised vs Plain: pharyngealised is different in tongue shape. There is an increase in y coordinates (Fan 15-22) indicating "retraction", decrease (Fan 25-35) indicating "depression" of the tongue and potential difference in larynx height (Fan 5-10)
+2. Uvular vs Pharyngealised: differences depend of vowels (Fan 15-34): uvular is fronter in /i:/ (Fan 22-34); "raised" in /a:/ (Fan 22-28) and /u:/ (Fan 15-25)
+3. Pharyngealised vs Pharyngeal: Pharyngealised is "retracted"/backed to mid-position (Fan 15-25), with "depression" of the tongue (Fan 22-35) and potential lowered larynx (Fan 5-10).
+
+### Pharyngealised vs Plain
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=1,vowel.ord="ii"),main = "difference pharyngealised vs plain Onset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=1,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=1,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=2,vowel.ord="ii"),main = "difference pharyngealised vs plain Midpoint",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=2,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=2,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+#### Offset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=3,vowel.ord="ii"),main = "difference pharyngealised vs plain Offset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=3,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","plain")),
+          xlab="",cond=list(time=3,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+
+### Uvular vs Pharyngealised
+
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=1,vowel.ord="ii"),main = "difference uvular vs pharyngealised Onset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=1,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=1,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=2,vowel.ord="ii"),main = "difference uvular vs pharyngealised Midpoint",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=2,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=2,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+#### Offset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=3,vowel.ord="ii"),main = "difference uvular vs pharyngealised Offset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=3,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("uvular","pharyngealised")),
+          xlab="",cond=list(time=3,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+
+### Pharyngealised vs Pharyngeal
+
+#### Onset
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=1,vowel.ord="ii"),main = "difference pharyngealised vs pharyngeal Onset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=1,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=1,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+#### Midpoint
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=2,vowel.ord="ii"),main = "difference pharyngealised vs pharyngeal Midpoint",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=2,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=2,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+```
+
+#### Offset
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+par(oma=c(1, 0, 0, 3.5),mgp=c(2, 1, 0))
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=3,vowel.ord="ii"),main = "difference pharyngealised vs pharyngeal Offset",
+          col='green',cex.main=1.1,mark.diff = TRUE,col.diff = "green",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=3,vowel.ord="aa"),add=TRUE,
+          col='red',mark.diff =  TRUE,col.diff = "red",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+
+plot_diff(phar.gam.AR, view="Fan",comp=list(context.ord=c("pharyngealised","pharyngeal")),
+          xlab="",cond=list(time=3,vowel.ord="uu"),add=TRUE,
+          col='blue',mark.diff =  TRUE,col.diff = "blue",
+          ylim=c(-15,15),hide.label=T,rm.ranef=T)
+legend(par('usr')[2], par('usr')[4], bty='n', xpd=NA,lty=1, 
+       legend=c("/i:/", "/a:/", "/u:/"),col=c("green","red","blue"), lwd=4, cex=1.2)
+
+```
+
