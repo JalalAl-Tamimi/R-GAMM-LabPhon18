@@ -44,7 +44,7 @@ ggplot.demo3
 ```
 
 # Actual data analyses
-This data is obtained from a single speaker producing various consonants in the frame VCV, with V = symmetric /i: a: u:/ (=vowel) and C is one of 17 consonants put into five contexts "plain", "velar", "uvular", "pharyngealised" and "pharyngeal" (=context). The data is from Ultrasound Tongue Imaging. Tongue contours were obtained at the consonant onset, midpoint and offset (=time). A total of 51 words (=word) were obtained and these were repeated 3 times. Tingue splies were extracted with X-Y coordinates (=y outcome). 42 Fan positions (=Fan) were extracted and these are used as a normalisation between contexts.
+This data is obtained from a single speaker producing various consonants in the frame VCV, with V = symmetric /i: a: u:/ (=vowel) and C is one of 17 consonants put into five contexts "plain", "velar", "uvular", "pharyngealised" and "pharyngeal" (=context). The data is from Ultrasound Tongue Imaging. Tongue contours were obtained at the consonant onset, midpoint and offset (=time). A total of 51 words (=word) were obtained and these were repeated 3 times. Tongue splines were extracted with X-Y coordinates (=y outcome). 42 Fan positions (=Fan) were extracted and these are used as a normalisation between contexts.
 The outcome is y, the predictors are Fan, time, context and vowel, and the random factor is word.
 
 ## Creating new variables
@@ -120,7 +120,7 @@ rho_est
 
 ### ACF first GAM
 The five plots below show the autocorrelation in the residuals. As can be see, the first plot using Fan, has a complete zero correlations. It is possible that because the various fan points obtained alongside the tongue contour are already correlated with each other, and hence the correlations between fan 1 to 2, 2 to 3, 41 to 42 are already taken into account by the model. 
-The four additional plots show the autocorrelation in teh residuals for time, context, vowel and word. All of these predictors are showing autocorrelations between their successive points. It is crucial to tell the model to account for this, otherwise there is overconfidence in the estimates. 
+The four additional plots show the autocorrelation in the residuals for time, context, vowel and word. All of these predictors are showing autocorrelations between their successive data points. This means that for a specific time (onset, midpoint or offset), there is already correlations between tongue splines obtained at the onset, the midpoint and the offset. It is crucial to tell the model to account for this, otherwise there is overconfidence in the estimates. 
 
 #### ACF by Fan
 
@@ -222,14 +222,14 @@ acf_resid(phar.gam.AR,split_pred=list(pharDF$word),main = "Average ACF AR by Wor
 
 
 ## Significance testing second Autoregressive GAM
-To test for significance of context, we run a model with a ML as method and evaluate significance through a maximum likelihood estimate.
+To test for significance of context, we run a model with a ML as method and evaluate significance through a maximum likelihood estimate. 
 
 ### Models
 We ran three models
 
 1. A full model with all predictors (phar.gam.AR.ML)
 2. A reduced model without any terms associated with the predictor "context" (phar.gam.AR.ML.Min.Context)
-3. An intercept only model (=Null) without any terms associated with the predictory "vowel" (phar.gam.AR.ML.Min.ContextAndVowel)
+3. An intercept only model (=Null) without any terms associated with the predictor "vowel" (phar.gam.AR.ML.Min.ContextAndVowel)
 
 ```{r warning=FALSE, message=FALSE, error=FALSE}
 phar.gam.AR.ML <- bam(y ~ context.ord*vowel.ord +
