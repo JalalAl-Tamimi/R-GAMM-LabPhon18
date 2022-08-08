@@ -23,6 +23,12 @@ library(ggplot2);library(mgcv);library(itsadug);library(tidyverse);library(ggani
 In this demo, data obtained from a Jordanian Arabic speaker producing the word /du:d/ "worm" is used. F2 frequencies obtained at 5 ms interval from onset to midpoint of the vowel are used.
 Let's plot the F2 frequencies by interval number. The second plot displays a linear regression line superimposed on the plot. As can be seen, the linear regression line is not able to cope with the curviness of the data, and is unable to cope with it. The third plot superimposes a spline obtained from a GAM model.
 
+```{r}
+demoGAMProd <- read.csv("dataProd_duud.csv")
+head(demoGAMProd)
+```
+
+
 ```{r warning=FALSE, message=FALSE, error=FALSE}
 ggplot.demo1 <- ggplot(demoGAMProd,aes(x=IntervalsN,y=F2))+
                 geom_point()+theme_bw(base_size = 20)+coord_cartesian(ylim=c(600,1800))+
@@ -54,8 +60,27 @@ Before running the actual GAM model on the data, we need to:
 2. To run an Auto-Regressive Model, we need to find the autocorrelation in the dataframe:
   + We rearrange the data by time, ID, and Fan 
   + We add a new variable "start" that marks the start of Fan
+  
 
 ```{r warning=FALSE, message=FALSE, error=FALSE}
+pharDF <- read.csv("resultsFull.c_NoRelNoz.csv")
+str(pharDF)
+
+levels(pharDF$context)
+pharDF$context <- factor(pharDF$context, 
+                                levels = c("plain","velar","uvular","pharyngealised","pharyngeal"))
+levels(pharDF$vowel)
+pharDF$vowel <- factor(pharDF$vowel, 
+                              levels = c("ii","aa","uu"))
+levels(pharDF$labelNew)
+pharDF$labelNew <- factor(pharDF$labelNew, 
+                                 levels = c("CL_Ons","CL_Mid","CL_Off"))
+
+
+pharDF$ID <- as.numeric(pharDF$ID)
+pharDF$Fan <- as.numeric(pharDF$Fan)
+pharDF$time <- pharDF$labelNew2
+
 
 pharDF$context.ord <- as.ordered(pharDF$context)
 contrasts(pharDF$context.ord) <- "contr.treatment"
