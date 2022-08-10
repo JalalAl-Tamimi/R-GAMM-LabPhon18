@@ -7,7 +7,9 @@ This includes a step by step tutorial analyses of ultrasound tongue imaging data
 1. Declaring parallel computing to speed up computation; note that this does not seem to increase the computation time for the ML model.
 2. Hard coding interaction term. the consonant:vowel interaction does not work anymore; using interaction(consonant, vowel) instead
 3. Added gam.check to evaluate the k number (knots). 
+4. Adde system information for packages used.
 
-Unfortunately, the gganimate function is not working as it should be; the previous animation on the original notebook is not working anymore.
+Unfortunately, the gganimate function is not working as it should be; the previous animation on the original notebook is not working anymore. 
+The whole notebook ran in around 5 hours using 10 CPUs. We gratefully acknowledge support from the CNRS/TGIR HUMA-NUM and IN2P3 Computing Center (Lyon - France) for providing computing and data-processing resources needed for this work
 
 
